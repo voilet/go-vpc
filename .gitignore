@@ -1,1 +1,4 @@
 .worktrees/
+
+# 编译产物
+/agent
