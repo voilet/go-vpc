@@ -5,20 +5,36 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/pem"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/curve25519"
 )
 
-// Generate 生成新的 Ed25519 密钥对
+// Generate 生成新的密钥对（Ed25519 用于设备身份，Curve25519 用于 WireGuard）
 func Generate() (*Identity, error) {
+	// 生成 Ed25519 密钥对（用于设备身份）
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("生成密钥对失败: %w", err)
+		return nil, fmt.Errorf("生成 Ed25519 密钥对失败: %w", err)
 	}
 
-	// 生成 DeviceID（公钥的 SHA256 哈希）
+	// 生成 Curve25519 密钥对（用于 WireGuard）
+	var wgPrivKey [32]byte
+	if _, err := rand.Read(wgPrivKey[:]); err != nil {
+		return nil, fmt.Errorf("生成 WireGuard 私钥失败: %w", err)
+	}
+	// Clamp 私钥（WireGuard 规范）
+	wgPrivKey[0] &= 248
+	wgPrivKey[31] &= 127
+	wgPrivKey[31] |= 64
+
+	var wgPubKey [32]byte
+	curve25519.ScalarBaseMult(&wgPubKey, &wgPrivKey)
+
+	// 生成 DeviceID（Ed25519 公钥的 SHA256 哈希）
 	hash := sha256.Sum256(pub)
 	deviceID := hex.EncodeToString(hash[:])
 
@@ -29,23 +45,35 @@ func Generate() (*Identity, error) {
 	}
 
 	return &Identity{
-		DeviceID:    deviceID,
-		Fingerprint: fingerprint,
-		PrivateKey:  priv,
-		PublicKey:   pub,
+		DeviceID:     deviceID,
+		Fingerprint:  fingerprint,
+		PrivateKey:   priv,
+		PublicKey:    pub,
+		WGPrivateKey: wgPrivKey,
+		WGPublicKey:  wgPubKey,
 	}, nil
 }
 
-// Save 将身份保存到文件（PEM 格式）
+// identityFile 身份文件结构（用于 JSON 序列化）
+type identityFile struct {
+	Ed25519PrivateKey []byte `json:"ed25519_private_key"`
+	WGPrivateKey      []byte `json:"wg_private_key"`
+}
+
+// Save 将身份保存到文件（JSON 格式）
 func Save(id *Identity, path string) error {
-	block := &pem.Block{
-		Type:  "ED25519 PRIVATE KEY",
-		Bytes: id.PrivateKey,
+	data := identityFile{
+		Ed25519PrivateKey: id.PrivateKey,
+		WGPrivateKey:      id.WGPrivateKey[:],
 	}
 
-	data := pem.EncodeToMemory(block)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("写入密钥文件失败: %w", err)
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化身份失败: %w", err)
+	}
+
+	if err := os.WriteFile(path, jsonData, 0600); err != nil {
+		return fmt.Errorf("写入身份文件失败: %w", err)
 	}
 
 	return nil
@@ -55,22 +83,26 @@ func Save(id *Identity, path string) error {
 func Load(path string) (*Identity, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取密钥文件失败: %w", err)
+		return nil, fmt.Errorf("读取身份文件失败: %w", err)
 	}
 
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("无效的 PEM 数据")
+	var file identityFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("解析身份文件失败: %w", err)
 	}
 
-	if block.Type != "ED25519 PRIVATE KEY" {
-		return nil, fmt.Errorf("不支持的密钥类型: %s", block.Type)
-	}
-
-	priv := ed25519.PrivateKey(block.Bytes)
+	// 恢复 Ed25519 密钥对
+	priv := ed25519.PrivateKey(file.Ed25519PrivateKey)
 	pub := priv.Public().(ed25519.PublicKey)
 
-	// 生成 DeviceID（公钥的 SHA256 哈希）
+	// 恢复 WireGuard 密钥对
+	var wgPrivKey [32]byte
+	copy(wgPrivKey[:], file.WGPrivateKey)
+
+	var wgPubKey [32]byte
+	curve25519.ScalarBaseMult(&wgPubKey, &wgPrivKey)
+
+	// 生成 DeviceID（Ed25519 公钥的 SHA256 哈希）
 	hash := sha256.Sum256(pub)
 	deviceID := hex.EncodeToString(hash[:])
 
@@ -81,10 +113,12 @@ func Load(path string) (*Identity, error) {
 	}
 
 	return &Identity{
-		DeviceID:    deviceID,
-		Fingerprint: fingerprint,
-		PrivateKey:  priv,
-		PublicKey:   pub,
+		DeviceID:     deviceID,
+		Fingerprint:  fingerprint,
+		PrivateKey:   priv,
+		PublicKey:    pub,
+		WGPrivateKey: wgPrivKey,
+		WGPublicKey:  wgPubKey,
 	}, nil
 }
 

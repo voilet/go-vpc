@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/example/go-vpc/api/signal"
@@ -258,7 +259,11 @@ func (c *SignalClient) Close() error {
 	return nil
 }
 
-// generateMessageID 生成消息 ID
+// messageCounter 用于生成唯一消息 ID 的原子计数器
+var messageCounter uint64
+
+// generateMessageID 生成消息 ID（时间戳 + 原子计数器，确保唯一性）
 func generateMessageID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	counter := atomic.AddUint64(&messageCounter, 1)
+	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), counter)
 }

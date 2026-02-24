@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -76,6 +78,14 @@ func (a *Agent) Start(ctx context.Context) error {
 	ctx, a.cancel = context.WithCancel(ctx)
 	a.mu.Unlock()
 
+	// 启动失败时清理资源
+	var startErr error
+	defer func() {
+		if startErr != nil {
+			a.shutdown()
+		}
+	}()
+
 	log.Printf("Agent 启动中... DeviceID: %s", a.identity.DeviceID)
 
 	// 1. NAT 探测
@@ -84,28 +94,28 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 
 	// 2. 连接 Management 服务器
-	if err := a.connectManagement(ctx); err != nil {
-		return fmt.Errorf("连接 Management 服务器失败: %w", err)
+	if startErr = a.connectManagement(ctx); startErr != nil {
+		return fmt.Errorf("连接 Management 服务器失败: %w", startErr)
 	}
 
 	// 3. 注册设备
-	if err := a.register(ctx); err != nil {
-		return fmt.Errorf("设备注册失败: %w", err)
+	if startErr = a.register(ctx); startErr != nil {
+		return fmt.Errorf("设备注册失败: %w", startErr)
 	}
 
 	// 4. 初始化 WireGuard
-	if err := a.initWireGuard(); err != nil {
-		return fmt.Errorf("初始化 WireGuard 失败: %w", err)
+	if startErr = a.initWireGuard(); startErr != nil {
+		return fmt.Errorf("初始化 WireGuard 失败: %w", startErr)
 	}
 
 	// 5. 连接 Signal 服务器
-	if err := a.connectSignal(ctx); err != nil {
-		return fmt.Errorf("连接 Signal 服务器失败: %w", err)
+	if startErr = a.connectSignal(ctx); startErr != nil {
+		return fmt.Errorf("连接 Signal 服务器失败: %w", startErr)
 	}
 
 	// 6. 启动心跳
-	if err := a.startHeartbeat(ctx); err != nil {
-		return fmt.Errorf("启动心跳失败: %w", err)
+	if startErr = a.startHeartbeat(ctx); startErr != nil {
+		return fmt.Errorf("启动心跳失败: %w", startErr)
 	}
 
 	// 7. 启动 Peer 同步
@@ -159,7 +169,7 @@ func (a *Agent) connectManagement(ctx context.Context) error {
 func (a *Agent) register(ctx context.Context) error {
 	resp, err := a.mgmtClient.Register(ctx, &management.RegisterRequest{
 		DeviceId:    a.identity.DeviceID,
-		PublicKey:   a.identity.PublicKeyBase64(),
+		PublicKey:   a.identity.WGPublicKeyBase64(), // 使用 WireGuard 公钥
 		Fingerprint: a.identity.Fingerprint,
 		DeviceInfo: &management.DeviceInfo{
 			Hostname: getHostname(),
@@ -176,8 +186,14 @@ func (a *Agent) register(ctx context.Context) error {
 		return fmt.Errorf("注册失败: %s", resp.Message)
 	}
 
-	// 保存网络信息
+	// 验证并保存网络信息
 	a.vip = net.ParseIP(resp.AssignedVip)
+	if a.vip == nil {
+		return fmt.Errorf("服务器返回无效的 VIP: %s", resp.AssignedVip)
+	}
+	if resp.VipPrefix < 0 || resp.VipPrefix > 128 {
+		return fmt.Errorf("服务器返回无效的 VIP 前缀: %d", resp.VipPrefix)
+	}
 	a.vipPrefix = int(resp.VipPrefix)
 	a.networkID = resp.NetworkId
 
@@ -188,7 +204,7 @@ func (a *Agent) register(ctx context.Context) error {
 // initWireGuard 初始化 WireGuard
 func (a *Agent) initWireGuard() error {
 	return a.wgEngine.Init(wireguard.Config{
-		PrivateKey: a.identity.PrivateKeyBase64(),
+		PrivateKey: a.identity.WGPrivateKeyBase64(), // 使用 WireGuard 私钥
 		ListenPort: a.cfg.WireGuard.ListenPort,
 		MTU:        a.cfg.WireGuard.MTU,
 	}, a.vip, a.vipPrefix)
@@ -350,14 +366,17 @@ func (a *Agent) Stop() error {
 
 // 辅助函数
 func getHostname() string {
-	// 简化实现
-	return "unknown"
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return hostname
 }
 
 func getOS() string {
-	return "unknown"
+	return runtime.GOOS
 }
 
 func getArch() string {
-	return "unknown"
+	return runtime.GOARCH
 }
