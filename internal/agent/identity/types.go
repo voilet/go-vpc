@@ -7,8 +7,10 @@ import (
 
 // Identity 表示设备身份
 type Identity struct {
-	PrivateKey ed25519.PrivateKey
-	PublicKey  ed25519.PublicKey
+	DeviceID    string             // 设备唯一标识（公钥的 SHA256 哈希）
+	Fingerprint string             // 设备指纹
+	PrivateKey  ed25519.PrivateKey // Ed25519 私钥
+	PublicKey   ed25519.PublicKey  // Ed25519 公钥
 }
 
 // PublicKeyBase64 返回 Base64 编码的公钥

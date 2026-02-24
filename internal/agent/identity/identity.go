@@ -3,6 +3,8 @@ package identity
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -16,9 +18,21 @@ func Generate() (*Identity, error) {
 		return nil, fmt.Errorf("生成密钥对失败: %w", err)
 	}
 
+	// 生成 DeviceID（公钥的 SHA256 哈希）
+	hash := sha256.Sum256(pub)
+	deviceID := hex.EncodeToString(hash[:])
+
+	// 生成设备指纹
+	fingerprint, err := GenerateFingerprint()
+	if err != nil {
+		return nil, fmt.Errorf("生成设备指纹失败: %w", err)
+	}
+
 	return &Identity{
-		PrivateKey: priv,
-		PublicKey:  pub,
+		DeviceID:    deviceID,
+		Fingerprint: fingerprint,
+		PrivateKey:  priv,
+		PublicKey:   pub,
 	}, nil
 }
 
@@ -56,9 +70,21 @@ func Load(path string) (*Identity, error) {
 	priv := ed25519.PrivateKey(block.Bytes)
 	pub := priv.Public().(ed25519.PublicKey)
 
+	// 生成 DeviceID（公钥的 SHA256 哈希）
+	hash := sha256.Sum256(pub)
+	deviceID := hex.EncodeToString(hash[:])
+
+	// 生成设备指纹
+	fingerprint, err := GenerateFingerprint()
+	if err != nil {
+		return nil, fmt.Errorf("生成设备指纹失败: %w", err)
+	}
+
 	return &Identity{
-		PrivateKey: priv,
-		PublicKey:  pub,
+		DeviceID:    deviceID,
+		Fingerprint: fingerprint,
+		PrivateKey:  priv,
+		PublicKey:   pub,
 	}, nil
 }
 
