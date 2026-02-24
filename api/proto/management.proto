@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package api.management;
+
+option go_package = "github.com/example/go-vpc/api/management;management";
+
+// ManagementService 管理服务
+// 负责设备注册、配置下发、心跳保活
+service ManagementService {
+  // Register 设备注册
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat 心跳保活（双向流）
+  rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+
+  // GetNetworkConfig 获取网络配置
+  rpc GetNetworkConfig(GetNetworkConfigRequest) returns (NetworkConfig);
+
+  // SyncPeers 同步 Peer 列表（服务端流）
+  rpc SyncPeers(SyncPeersRequest) returns (stream PeerUpdate);
+}
+
+// RegisterRequest 注册请求
+message RegisterRequest {
+  string device_id = 1;           // 设备唯一标识
+  string public_key = 2;          // WireGuard 公钥（Base64）
+  string fingerprint = 3;         // 设备指纹
+  DeviceInfo device_info = 4;     // 设备信息
+}
+
+// DeviceInfo 设备信息
+message DeviceInfo {
+  string hostname = 1;            // 主机名
+  string os = 2;                  // 操作系统
+  string arch = 3;                // CPU 架构
+  string version = 4;             // Agent 版本
+}
+
+// RegisterResponse 注册响应
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+  string assigned_vip = 3;        // 分配的 VIP 地址
+  int32 vip_prefix = 4;           // VIP 网段前缀长度
+  string network_id = 5;          // 所属网络 ID
+}
+
+// HeartbeatRequest 心跳请求
+message HeartbeatRequest {
+  string device_id = 1;
+  int64 timestamp = 2;            // Unix 时间戳（毫秒）
+  NATInfo nat_info = 3;           // NAT 信息（可选，变化时上报）
+}
+
+// NATInfo NAT 信息
+message NATInfo {
+  NATType type = 1;
+  string public_addr = 2;         // 公网地址 IP:Port
+  string local_addr = 3;          // 本地地址 IP:Port
+}
+
+// NATType NAT 类型
+enum NATType {
+  NAT_TYPE_UNKNOWN = 0;
+  NAT_TYPE_NONE = 1;              // 无 NAT（公网 IP）
+  NAT_TYPE_FULL_CONE = 2;         // 全锥形
+  NAT_TYPE_RESTRICTED = 3;        // 受限锥形
+  NAT_TYPE_PORT_RESTRICTED = 4;   // 端口受限锥形
+  NAT_TYPE_SYMMETRIC = 5;         // 对称型
+}
+
+// HeartbeatResponse 心跳响应
+message HeartbeatResponse {
+  int64 server_time = 1;          // 服务器时间
+  repeated Command commands = 2;   // 待执行命令
+}
+
+// Command 服务端下发的命令
+message Command {
+  CommandType type = 1;
+  bytes payload = 2;              // 命令载荷（JSON 或 Protobuf）
+}
+
+// CommandType 命令类型
+enum CommandType {
+  COMMAND_TYPE_UNKNOWN = 0;
+  COMMAND_TYPE_UPDATE_PEERS = 1;  // 更新 Peer 列表
+  COMMAND_TYPE_RECONNECT = 2;     // 重新连接
+  COMMAND_TYPE_UPGRADE = 3;       // 升级 Agent
+}
+
+// GetNetworkConfigRequest 获取网络配置请求
+message GetNetworkConfigRequest {
+  string device_id = 1;
+  string network_id = 2;
+}
+
+// NetworkConfig 网络配置
+message NetworkConfig {
+  string network_id = 1;
+  string network_cidr = 2;        // 网络 CIDR，如 10.0.0.0/8
+  int32 mtu = 3;                  // MTU 大小
+  repeated string dns_servers = 4; // DNS 服务器列表
+  repeated RouteConfig routes = 5; // 路由配置
+}
+
+// RouteConfig 路由配置
+message RouteConfig {
+  string destination = 1;         // 目标网段 CIDR
+  string via = 2;                 // 下一跳（VIP 或 device_id）
+}
+
+// SyncPeersRequest 同步 Peer 请求
+message SyncPeersRequest {
+  string device_id = 1;
+  string network_id = 2;
+}
+
+// PeerUpdate Peer 更新
+message PeerUpdate {
+  PeerUpdateType type = 1;
+  PeerInfo peer = 2;
+}
+
+// PeerUpdateType Peer 更新类型
+enum PeerUpdateType {
+  PEER_UPDATE_TYPE_UNKNOWN = 0;
+  PEER_UPDATE_TYPE_ADD = 1;       // 添加 Peer
+  PEER_UPDATE_TYPE_REMOVE = 2;    // 移除 Peer
+  PEER_UPDATE_TYPE_UPDATE = 3;    // 更新 Peer
+}
+
+// PeerInfo Peer 信息
+message PeerInfo {
+  string device_id = 1;
+  string public_key = 2;          // WireGuard 公钥
+  string vip = 3;                 // VIP 地址
+  repeated string endpoints = 4;   // 可能的端点列表
+  NATType nat_type = 5;
+  repeated string allowed_ips = 6; // 允许的 IP 范围
+}

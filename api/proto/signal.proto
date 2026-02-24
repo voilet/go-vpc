@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package api.signal;
+
+option go_package = "github.com/example/go-vpc/api/signal;signal";
+
+// SignalService 信令服务
+// 负责 P2P 连接建立时的信令交换
+service SignalService {
+  // Connect 建立信令通道（双向流）
+  rpc Connect(stream SignalMessage) returns (stream SignalMessage);
+}
+
+// SignalMessage 信令消息
+message SignalMessage {
+  string from_device_id = 1;      // 发送方设备 ID
+  string to_device_id = 2;        // 接收方设备 ID
+  SignalType type = 3;            // 信令类型
+  bytes payload = 4;              // 信令载荷
+  int64 timestamp = 5;            // 时间戳（毫秒）
+  string message_id = 6;          // 消息 ID（用于去重和确认）
+}
+
+// SignalType 信令类型
+enum SignalType {
+  SIGNAL_TYPE_UNKNOWN = 0;
+  SIGNAL_TYPE_OFFER = 1;          // 连接请求
+  SIGNAL_TYPE_ANSWER = 2;         // 连接响应
+  SIGNAL_TYPE_CANDIDATE = 3;      // ICE 候选（端点信息）
+  SIGNAL_TYPE_PUNCH = 4;          // 打洞请求
+  SIGNAL_TYPE_PUNCH_ACK = 5;      // 打洞确认
+  SIGNAL_TYPE_KEEPALIVE = 6;      // 保活
+  SIGNAL_TYPE_DISCONNECT = 7;     // 断开连接
+}
+
+// OfferPayload 连接请求载荷
+message OfferPayload {
+  string public_key = 1;          // 发起方 WireGuard 公钥
+  int32 listen_port = 2;          // 发起方 WireGuard 监听端口
+  repeated Endpoint endpoints = 3; // 发起方可能的端点列表
+  NATInfo nat_info = 4;           // 发起方 NAT 信息
+}
+
+// AnswerPayload 连接响应载荷
+message AnswerPayload {
+  string public_key = 1;          // 响应方 WireGuard 公钥
+  int32 listen_port = 2;          // 响应方 WireGuard 监听端口
+  repeated Endpoint endpoints = 3; // 响应方可能的端点列表
+  NATInfo nat_info = 4;           // 响应方 NAT 信息
+  bool accepted = 5;              // 是否接受连接
+  string reject_reason = 6;       // 拒绝原因（如不接受）
+}
+
+// Endpoint 端点信息
+message Endpoint {
+  string address = 1;             // IP:Port
+  EndpointType type = 2;          // 端点类型
+  int32 priority = 3;             // 优先级（越高越优先）
+}
+
+// EndpointType 端点类型
+enum EndpointType {
+  ENDPOINT_TYPE_UNKNOWN = 0;
+  ENDPOINT_TYPE_LOCAL = 1;        // 本地地址
+  ENDPOINT_TYPE_STUN = 2;         // STUN 探测的公网地址
+  ENDPOINT_TYPE_RELAY = 3;        // 中继地址
+}
+
+// CandidatePayload ICE 候选载荷
+message CandidatePayload {
+  repeated Endpoint endpoints = 1; // 新发现的端点
+}
+
+// PunchPayload 打洞请求载荷
+message PunchPayload {
+  string target_address = 1;      // 目标地址（对方提供的端点）
+  int32 punch_count = 2;          // 打洞尝试次数
+  int64 punch_interval_ms = 3;    // 打洞间隔（毫秒）
+}
+
+// PunchAckPayload 打洞确认载荷
+message PunchAckPayload {
+  bool success = 1;               // 是否成功
+  string connected_endpoint = 2;   // 成功连接的端点
+  int64 rtt_ms = 3;               // 往返时延（毫秒）
+}
+
+// NATInfo NAT 信息（与 management.proto 保持一致）
+message NATInfo {
+  NATType type = 1;
+  string public_addr = 2;
+  string local_addr = 3;
+}
+
+// NATType NAT 类型
+enum NATType {
+  NAT_TYPE_UNKNOWN = 0;
+  NAT_TYPE_NONE = 1;
+  NAT_TYPE_FULL_CONE = 2;
+  NAT_TYPE_RESTRICTED = 3;
+  NAT_TYPE_PORT_RESTRICTED = 4;
+  NAT_TYPE_SYMMETRIC = 5;
+}
