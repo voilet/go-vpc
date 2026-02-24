@@ -1,4 +1,5 @@
 .worktrees/
+.claude/
 
 # 编译产物
 /agent
